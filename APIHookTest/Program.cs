@@ -6,6 +6,7 @@ using System.Windows.Forms;
 
 namespace APIHookTest {
 	static class Program {
+		public static frmDemo Form;
 		/// <summary>
 		/// The main entry point for the application.
 		/// </summary>
@@ -13,7 +14,7 @@ namespace APIHookTest {
 		static void Main() {
 			Application.EnableVisualStyles();
 			Application.SetCompatibleTextRenderingDefault(false);
-			Application.Run(new frmDemo());
+			Application.Run(Form = new frmDemo());
 		}
 	}
 }

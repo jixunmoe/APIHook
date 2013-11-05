@@ -1,4 +1,6 @@
-﻿using System;
+﻿#define outputDebugInfo
+
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -8,15 +10,16 @@ using System.Text;
 
 /*
  * Reference / 参考来源: 
- * 1. 网络上关于 APIHook 的易语言源码
- * 2. http://www.ownedcore.com/forums/world-of-warcraft/world-of-warcraft-bots-programs/wow-memory-editing/424055-c-apihook-class.html
- * 3. http://www.mpgh.net/forum/250-c-programming/298510-c-writeprocessmemory-readprocessmemory.html
- * 4. http://stackoverflow.com/a/1318948
- * 5. http://stackoverflow.com/a/5056351
- * 6. http://stackoverflow.com/a/4015632
- * 7. http://stackoverflow.com/q/137544
- * 8. http://stackoverflow.com/a/2049606
- * 9. http://stackoverflow.com/a/311179
+ * 01. 网络上关于 APIHook 的易语言源码
+ * 02. http://www.ownedcore.com/forums/world-of-warcraft/world-of-warcraft-bots-programs/wow-memory-editing/424055-c-apihook-class.html
+ * 03. http://www.mpgh.net/forum/250-c-programming/298510-c-writeprocessmemory-readprocessmemory.html
+ * 04. http://stackoverflow.com/a/1318948
+ * 05. http://stackoverflow.com/a/5056351
+ * 06. http://stackoverflow.com/a/4015632
+ * 07. http://stackoverflow.com/q/137544
+ * 08. http://stackoverflow.com/a/2049606
+ * 09. http://stackoverflow.com/a/311179
+ * 10. http://stackoverflow.com/a/6193914
  */
 
 namespace APIHook {
@@ -30,6 +33,7 @@ namespace APIHook {
 		public bool unhookAtDispose = true;
 		public bool isHooked { get; private set; }
 		// 内部成员变量
+		private Delegate funcCallback;
 
 		/// <summary>
 		/// [函数地址] API 入口地址
@@ -43,11 +47,12 @@ namespace APIHook {
 		/// <summary>
 		/// [原字节] 保存API入口前5个字节
 		/// </summary>
-		private byte[] oldBytes;
+		private static byte[] oldBytes;
 		/// <summary>
 		/// [原地址], AddressOf oldBytecode
 		/// </summary>
-		public int oldCodeEntryAddr{get; private set;}
+		public int oldCodeEntryAddr { get; private set; }
+		public IntPtr oldCodeEntryAddrPtr { get; private set; }
 		/// <summary>
 		/// 用于写入的字节集
 		/// </summary>
@@ -68,15 +73,15 @@ namespace APIHook {
 		}
 
 		private byte[] myInt2Bytes(int input) {
-			//Debug.WriteLine("Calc byte code for: " + input.ToString());
+#if outputDebugInfo
+			Debug.WriteLine("Calc byte code for: " + input.ToString());
+#endif
 			byte[] intBytes = BitConverter.GetBytes(input);
 
 			// Not needed?
 			//if (BitConverter.IsLittleEndian)
 			//	Array.Reverse(intBytes);
 
-
-			//Debug.WriteLine(ByteArrayToString(intBytes));
 			return intBytes;
 		}
 
@@ -89,10 +94,17 @@ namespace APIHook {
 		/// <returns></returns>
 		public bool installHook(string sLibPathOrName, string funcName, Delegate callback) {
 			// Print warnning. Will not compilied to Execuble if is release.
-			Debug.WriteLine("Run as 'Release', or this will fail.");
+			Debug.WriteLine("If program crashed, try again 'Release'. If it still doesn't work, please submit an issue at \n"
+				+ @"https://github.com/JixunMoe/APIHook/issues/new");
+
+			if (oldCodeEntryAddrPtr == null)
+				oldCodeEntryAddrPtr = IntPtr.Zero;
 
 			if (hFunc != 0)
 				return false;
+
+			// C# 的智能内存回收 (#哭瞎)
+			funcCallback = callback;
 
 			int hModule = GetModuleHandle(sLibPathOrName);
 			if (hModule == 0) {
@@ -114,25 +126,25 @@ namespace APIHook {
 			 *   - First five bytes will be same as the origional API.
 			 *   - Next five bytes, jmp to origional API addr + 5.
 			 */
-			this.oldBytes = new byte[10];
-			Array.Copy(
-				mem.ReadMem(hFunc, 0x5),
-				0, oldBytes, 0, 5
-			);
-
 			int iCallback = Marshal.GetFunctionPointerForDelegate(callback).ToInt32();
-			// Debug.WriteLine("hFunc =>   " + hFunc.ToString("X"));
-			// Debug.WriteLine("newFunc => " + iCallback.ToString("X"));
+#if outputDebugInfo
+			Debug.WriteLine("hFunc =>   " + hFunc.ToString("X"));
+			Debug.WriteLine("newFunc => " + iCallback.ToString("X"));
+#endif
 
+			// 申请 10 字节的内存空间
+			// Marshal.FreeHGlobal(oldCodeEntryAddrPtr);
+			oldCodeEntryAddrPtr = Marshal.AllocHGlobal(10);
+			oldCodeEntryAddr = (int)oldCodeEntryAddrPtr;
+			Marshal.Copy(mem.ReadMem(hFunc, 0x5), 0, oldCodeEntryAddrPtr, 5);
+			Marshal.Copy(new byte[] {0xE9}, 0, IntPtr.Add(oldCodeEntryAddrPtr, 5), 1);
+			Marshal.Copy(myInt2Bytes(hFunc - oldCodeEntryAddr - 5), 0, IntPtr.Add(oldCodeEntryAddrPtr, 6), 4);
+			oldBytes = mem.ReadMem(oldCodeEntryAddr, 10);
 			// 原地址 ＝ lstrcpyn_字节集 (原字节, 原字节, 0)
-			this.oldCodeEntryAddr = addr.get(oldBytes);
 			// CURRENT_RVA: jmp (DESTINATION_RVA - CURRENT_RVA - 5 [sizeof(E9 xx xx xx xx)])
 			// 新函数地址 － 函数地址 － 5
-			oldBytes[5] = 0xE9; // jmp xxxxxx
-			Array.Copy(
-				myInt2Bytes(hFunc - oldCodeEntryAddr - 5),
-				0, oldBytes, 6, 4
-			);
+			// oldBytes[5] = 0xE9; // jmp xxxxxx
+
 
 			/*
 			 * newBytes
@@ -151,11 +163,15 @@ namespace APIHook {
 			);
 
 			uint temp = 0;
-			VirtualProtect(oldCodeEntryAddr, (uint)0x05, (uint)Protection.PAGE_EXECUTE_READWRITE, out temp);
-			// Debug.WriteLine("oldCodeEntryAddr => " + oldCodeEntryAddr.ToString("X"));
-			// Debug.WriteLine("oldBytes => " + ByteArrayToString(oldBytes));
-			// Debug.WriteLine("newBytes => " + ByteArrayToString(newBytes));
-
+			if (!VirtualProtect(oldCodeEntryAddr, (uint)0x05, (uint)Protection.PAGE_EXECUTE_READWRITE, out temp))
+				throw new Exception("Unable to mark it Exe|Read|Write");
+			
+#if outputDebugInfo
+			Debug.WriteLine("oldCodeEntryAddr  => " + oldCodeEntryAddr.ToString("X"));
+			Debug.WriteLine("oldBytes (Orig. ) => " + ByteArrayToString(mem.ReadMem(oldCodeEntryAddr, 10)));
+			Debug.WriteLine("oldBytes (Copied) => " + ByteArrayToString(oldBytes));
+			Debug.WriteLine("newBytes => " + ByteArrayToString(newBytes));
+#endif
 			// 写到内存 (新字节, 函数地址, 5)  ' 修改API入口前5字节
 			mem.WriteMem(hFunc, newBytes, 5);
 
@@ -176,7 +192,7 @@ namespace APIHook {
 		/// Pause the hook
 		/// </summary>
 		public void pause() {
-			mem.WriteMem(hFunc, this.oldBytes, 5);
+			mem.WriteMem(hFunc, oldBytes, 5);
 		}
 
 		/// <summary>

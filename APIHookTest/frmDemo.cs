@@ -18,14 +18,14 @@ namespace APIHookTest {
 
 		// APIHook Class init.
 		// 初始化
-		public APIHook.APIHook MyMsgBox = new APIHook.APIHook();
+		public static APIHook.APIHook MyMsgBox = new APIHook.APIHook();
 
 		// Define Callback
 		// 定义回调
 		public delegate int MyMsgBoxCallbackPtr(int hWnd, int lpText, int lpCaption, int uType);
 
 		// 回调, 全部都是指针…
-		public int MyMsgBoxCallback(int hWnd, int lpText, int lpCaption, int uType) {
+		public static int MyMsgBoxCallback(int hWnd, int lpText, int lpCaption, int uType) {
 			Debug.WriteLine("MyMsgBoxCallback");
 
 			MyMsgBoxCallbackPtr MyMsg =
@@ -38,7 +38,7 @@ namespace APIHookTest {
 			return MyMsg(
 				hWnd, 
 				// 文本需要取地址… 上面就是这么定义的 233
-				APIHook.addr.get(MyMsgBox.fetchString(lpText) + "\n\n" + textMyString.Text),
+				APIHook.addr.get(MyMsgBox.fetchString(lpText) + "\n\n" + Program.Form.textMyString.Text),
 				lpCaption,
 				uType
 			);
@@ -48,6 +48,8 @@ namespace APIHookTest {
 		private void Form1_Load(object sender, EventArgs e) {
 			MyMsgBox.installHook("user32.dll", "MessageBoxW", new MyMsgBoxCallbackPtr(MyMsgBoxCallback));
 			textMyString.Text = "Origional entry point: 0x" + MyMsgBox.oldCodeEntryAddr.ToString("X");
+
+			btnTest.PerformClick();
 		}
 
 		private void btnCall_Click(object sender, EventArgs e) {
